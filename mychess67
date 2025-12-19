@@ -1,0 +1,351 @@
+"""
+Консольная шахматная игра на Python.
+
+Авторы: Иванов Никита, Тузов Иван, Арби Сагир (команда "Орлы - 2006")
+"""
+import copy
+
+# Глобальное состояние игры
+chess_board: list[list[str]] = []
+current_player = "W"  # W - белые, B - чёрные
+history = []
+
+# Словарь символов фигур для отображения
+PIECE_SYMBOLS = {
+    "Wpawn": "♙", "Wcastle": "♖", "Wbishop": "♗",
+    "Whorse": "♘", "Wqueen": "♕", "Wking": "♔",
+    "Bpawn": "♟", "Bcastle": "♜", "Bbishop": "♝",
+    "Bhorse": "♞", "Bqueen": "♛", "Bking": "♚",
+    "Z": " "
+}
+
+# Все допустимые фигуры для валидации ввода
+VALID_PIECES = set(PIECE_SYMBOLS.keys())
+
+
+def print_board():
+    """Выводит шахматную доску в консоль, ориентируя её к текущему игроку."""
+    if len(chess_board) != 8:
+        print("Ошибка: некорректные размеры доски")
+        return False
+
+    # Ориентация доски зависит от текущего игрока
+    if current_player == "B":
+        cols = "HGFEDCBA"
+        rows = range(8)
+        col_range = range(8)
+    else:
+        cols = "ABCDEFGH"
+        rows = range(7, -1, -1)
+        col_range = range(7, -1, -1)
+
+    # Заголовок с буквами колонок
+    print("\t" + "\t".join(cols))
+    
+    # Вывод строк доски
+    for y in rows:
+        print(y + 1, end="")
+        for x in col_range:
+            piece = chess_board[y][x]
+            symbol = PIECE_SYMBOLS.get(piece, "?")
+            print(f"\t{symbol}", end="")
+        print()
+    return True
+
+
+def init_board():
+    """Инициализирует доску стандартной расстановкой фигур."""
+    global chess_board, current_player, history
+    chess_board = [
+        ["Wcastle", "Whorse", "Wbishop", "Wking", "Wqueen", "Wbishop", "Whorse", "Wcastle"],
+        ["Wpawn"] * 8,
+        ["Z"] * 8,
+        ["Z"] * 8,
+        ["Z"] * 8,
+        ["Z"] * 8,
+        ["Bpawn"] * 8,
+        ["Bcastle", "Bhorse", "Bbishop", "Bking", "Bqueen", "Bbishop", "Bhorse", "Bcastle"],
+    ]
+    current_player = "W"
+    history.append([])
+
+
+def is_valid_position(x, y):
+    """Проверяет, что координаты находятся в пределах доски."""
+    return 0 <= x < 8 and 0 <= y < 8
+
+
+def is_valid_move_target(color, x, y):
+    """Проверяет, можно ли ходить на клетку (не занята своей фигурой)."""
+    if not is_valid_position(x, y):
+        return False
+    return chess_board[y][x][0] != color
+
+
+def is_king_safe_after_move(color, old_x, old_y, new_x, new_y):
+    """Проверяет, не окажется ли король под шахом после хода."""
+    # Создаём копию доски и симулируем ход
+    temp_board = copy.deepcopy(chess_board)
+    temp_board[new_y][new_x] = temp_board[old_y][old_x]
+    temp_board[old_y][old_x] = "Z"
+
+    # Находим позицию короля
+    king_pos = None
+    enemy_positions = []
+    
+    for y in range(8):
+        for x in range(8):
+            piece = temp_board[y][x]
+            if piece == color + "king":
+                king_pos = (x, y)
+            elif piece[0] not in ["Z", color]:
+                enemy_positions.append((x, y, piece))
+
+    if not king_pos:
+        return True
+
+    # Проверяем атаки всех вражеских фигур
+    for ex, ey, piece in enemy_positions:
+        piece_type = piece[1:]
+        enemy_color = piece[0]
+        attacks = get_piece_moves(piece_type, enemy_color, ex, ey, temp_board, attack_mode=True)
+        if king_pos in [(ax, ay) for ax, ay in attacks]:
+            return False
+    return True
+
+
+def get_piece_moves(piece_type, color, x, y, board=None, attack_mode=False):
+    """Возвращает список возможных ходов для фигуры."""
+    if board is None:
+        board = chess_board
+    
+    moves = []
+    
+    def add_move(nx, ny):
+        """Добавляет ход, если он валиден."""
+        if not is_valid_position(nx, ny):
+            return False
+        if board[ny][nx][0] == color:
+            return False
+        if attack_mode:
+            moves.append((nx, ny))
+            return board[ny][nx] == "Z"  # Продолжаем только если клетка пустая
+        if is_king_safe_after_move(color, x, y, nx, ny):
+            moves.append((nx, ny))
+        return board[ny][nx] == "Z"
+
+    def add_line_moves(dx, dy):
+        """Добавляет ходы по линии (для ладьи, слона, ферзя)."""
+        for i in range(1, 8):
+            if not add_move(x + dx * i, y + dy * i):
+                break
+
+    if piece_type == "horse":
+        # Конь ходит буквой "Г"
+        for dy in [-2, 2]:
+            for dx in [-1, 1]:
+                add_move(x + dx, y + dy)
+        for dy in [-1, 1]:
+            for dx in [-2, 2]:
+                add_move(x + dx, y + dy)
+
+    elif piece_type == "castle":
+        # Ладья ходит по вертикали и горизонтали
+        for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
+            add_line_moves(dx, dy)
+
+    elif piece_type == "bishop":
+        # Слон ходит по диагоналям
+        for dx, dy in [(1, 1), (1, -1), (-1, 1), (-1, -1)]:
+            add_line_moves(dx, dy)
+
+    elif piece_type == "queen":
+        # Ферзь = ладья + слон
+        for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0), (1, 1), (1, -1), (-1, 1), (-1, -1)]:
+            add_line_moves(dx, dy)
+
+    elif piece_type == "king":
+        # Король ходит на одну клетку в любом направлении
+        for dy in [-1, 0, 1]:
+            for dx in [-1, 0, 1]:
+                if dx or dy:
+                    add_move(x + dx, y + dy)
+
+    elif piece_type == "pawn":
+        # Пешка: направление зависит от цвета
+        direction = 1 if color == "W" else -1
+        start_row = 1 if color == "W" else 6
+        enemy = "B" if color == "W" else "W"
+
+        # Ход вперёд
+        if not attack_mode:
+            ny = y + direction
+            if is_valid_position(x, ny) and board[ny][x] == "Z":
+                if is_king_safe_after_move(color, x, y, x, ny):
+                    moves.append((x, ny))
+                # Двойной ход с начальной позиции
+                if y == start_row:
+                    ny2 = y + 2 * direction
+                    if board[ny2][x] == "Z" and is_king_safe_after_move(color, x, y, x, ny2):
+                        moves.append((x, ny2))
+
+        # Взятие по диагонали
+        for dx in [-1, 1]:
+            nx, ny = x + dx, y + direction
+            if is_valid_position(nx, ny):
+                if attack_mode or board[ny][nx][0] == enemy:
+                    if attack_mode:
+                        moves.append((nx, ny))
+                    elif is_king_safe_after_move(color, x, y, nx, ny):
+                        moves.append((nx, ny))
+
+    return moves
+
+
+def make_move(x, y, new_x, new_y):
+    """Выполняет ход, если он валиден. Возвращает True при успехе."""
+    global current_player
+    
+    piece = chess_board[y][x]
+    if piece[0] != current_player:
+        print(f"Ошибка: сейчас ход {'белых' if current_player == 'W' else 'чёрных'}")
+        return False
+
+    piece_type = piece[1:]
+    valid_moves = get_piece_moves(piece_type, current_player, x, y)
+    
+    if (new_x, new_y) not in valid_moves:
+        print("Некорректный ход")
+        print(f"Возможные ходы: {valid_moves}")
+        return False
+
+    # Выполняем ход
+    chess_board[new_y][new_x] = piece
+    chess_board[y][x] = "Z"
+    return True
+
+
+def parse_move(move_str):
+    """Парсит строку хода (например 'E2E4') в координаты."""
+    cols = "HGFEDCBA"
+    try:
+        x = cols.index(move_str[0].upper())
+        y = int(move_str[1]) - 1
+        new_x = cols.index(move_str[2].upper())
+        new_y = int(move_str[3]) - 1
+        return x, y, new_x, new_y
+    except (ValueError, IndexError):
+        return None
+
+
+def play(auto_moves=None):
+    """Основной игровой цикл."""
+    global current_player
+    
+    if len(chess_board) != 8:
+        init_board()
+
+    move_index = 0
+    
+    while True:
+        print_board()
+        player_name = "белых" if current_player == "W" else "чёрных"
+        print(f"\nХод {player_name}:")
+        print("Формат: E2E4 | END для выхода")
+
+        # Получаем ход
+        if auto_moves and move_index < len(auto_moves):
+            move_str = auto_moves[move_index]
+            print(f"> {move_str}")
+            move_index += 1
+        else:
+            move_str = input("> ").strip().upper()
+
+        if move_str == "END":
+            print("Игра завершена")
+            history[-1].append(move_str)
+            break
+
+        coords = parse_move(move_str)
+        if not coords:
+            print("Неверный формат хода")
+            continue
+
+        x, y, new_x, new_y = coords
+        if make_move(x, y, new_x, new_y):
+            history[-1].append(move_str)
+            current_player = "B" if current_player == "W" else "W"
+
+    init_board()
+
+
+def set_custom_board():
+    """Позволяет ввести произвольную расстановку фигур."""
+    global chess_board, current_player, history
+    
+    print("Введите доску построчно (8 фигур через пробел)")
+    print("Фигуры: Wcastle, Whorse, Wbishop, Wking, Wqueen, Wpawn")
+    print("        Bcastle, Bhorse, Bbishop, Bking, Bqueen, Bpawn")
+    print("Пустая клетка: Z")
+
+    temp_board = []
+    for row in range(8):
+        while True:
+            print(f"Строка {row + 1}: ", end="")
+            line = input().split()
+            if len(line) == 8 and all(p in VALID_PIECES for p in line):
+                temp_board.append(line)
+                break
+            print("Ошибка ввода, попробуйте снова")
+
+    while True:
+        color = input("Цвет текущего игрока (W/B): ").strip().upper()
+        if color in ["W", "B"]:
+            break
+        print("Введите W или B")
+
+    chess_board = temp_board
+    current_player = color
+    history.append([])
+
+
+# Тестовые партии для демонстрации
+DEMO_GAMES = {
+    "Венская партия": [
+        "E2E4", "E7E5", "B1C3", "G8F6", "F2F4",
+        "D7D5", "F4E5", "F6E4", "G1F3", "F8E7",
+        "F1E2", "END"
+    ],
+    "Французская защита": [
+        "E2E4", "E7E6", "D2D4", "D7D5", "C2C3",
+        "C7C5", "E4D5", "E6D5", "C3D5", "D8D5",
+        "F1E2", "F8E7", "E1G1", "G8F6", "B1C3",
+        "D5D4", "C1E3", "B8C6", "G1F1", "E7F6",
+        "F2F3", "C6B4", "A2A3", "B4C6", "END"
+    ]
+}
+
+
+if __name__ == "__main__":
+    print("=" * 50)
+    print("        ШАХМАТЫ - Консольная игра")
+    print("=" * 50)
+    print("\n1. Демо-партии")
+    print("2. Новая игра")
+    print("3. Своя расстановка")
+    
+    choice = input("\nВыбор: ").strip()
+    
+    if choice == "1":
+        for name, moves in DEMO_GAMES.items():
+            print(f"\n{'=' * 50}")
+            print(f"Партия: {name}")
+            print("=" * 50)
+            init_board()
+            play(moves)
+    elif choice == "3":
+        set_custom_board()
+        play()
+    else:
+        init_board()
+        play()
